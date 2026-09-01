@@ -1,0 +1,127 @@
+name: Sync upstream release
+
+on:
+  schedule:
+    - cron: "23 2 * * *"
+  workflow_dispatch:
+    inputs:
+      upstream_tag:
+        description: Optional mattpocock/skills v-prefixed release tag
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-upstream-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve upstream release
+        id: upstream
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_TAG: ${{ inputs.upstream_tag }}
+        run: |
+          set -euo pipefail
+          tag="${REQUESTED_TAG:-}"
+          if [[ -z "$tag" ]]; then
+            tag="$(gh api repos/mattpocock/skills/releases/latest --jq .tag_name)"
+          fi
+          if [[ ! "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)([-+][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid upstream release tag: $tag" >&2
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Package
+        if: steps.upstream.outputs.exists == 'false'
+        run: |
+          python3 scripts/package.py \
+            --upstream-tag "${{ steps.upstream.outputs.tag }}" \
+            --repository "$GITHUB_REPOSITORY"
+
+      - name: Validate
+        if: steps.upstream.outputs.exists == 'false'
+        run: |
+          count="$(wc -l < dist/skills.txt)"
+          python3 scripts/validate_package.py \
+            "dist/mattpocock.skills-${{ steps.upstream.outputs.tag }}.orax" \
+            --expected-version "${{ steps.upstream.outputs.version }}" \
+            --expected-count "$count"
+
+      - name: Create release
+        if: steps.upstream.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.upstream.outputs.tag }}" \
+            "dist/mattpocock.skills-${{ steps.upstream.outputs.tag }}.orax" \
+            dist/manifest.toml \
+            dist/skills.txt \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "${{ steps.upstream.outputs.tag }}" \
+            --generate-notes
+
+      - name: Download existing release manifest
+        if: steps.upstream.outputs.exists == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p dist
+          gh release download "${{ steps.upstream.outputs.tag }}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern manifest.toml \
+            --dir dist \
+            --clobber
+
+      - name: Open marketplace update PR
+        env:
+          GH_TOKEN: ${{ secrets.MARKETPLACE_TOKEN }}
+          TAG: ${{ steps.upstream.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${GH_TOKEN:-}" ]]; then
+            echo "MARKETPLACE_TOKEN is required to update ora-space/marketplace" >&2
+            exit 1
+          fi
+          branch="release/mattpocock-skills-${TAG}"
+          git clone https://x-access-token:${GH_TOKEN}@github.com/ora-space/marketplace.git marketplace
+          cd marketplace
+          if grep -q "version = \"${TAG#v}\"" registry/m/mattpocock.skills/orax.toml 2>/dev/null; then
+            echo "Marketplace already contains ${TAG}"
+            exit 0
+          fi
+          if gh pr list --repo ora-space/marketplace --state open --head "$branch" --json number --jq 'length > 0' | grep -q true; then
+            echo "An open marketplace PR already tracks ${TAG}"
+            exit 0
+          fi
+          git checkout -b "$branch"
+          mkdir -p registry/m/mattpocock.skills
+          cp ../dist/manifest.toml registry/m/mattpocock.skills/orax.toml
+          cp ../README.md registry/m/mattpocock.skills/README.md
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git add registry/m/mattpocock.skills
+          git commit -m "chore: update Matt Pocock Skills to ${TAG}"
+          git push origin "$branch"
+          gh pr create \
+            --repo ora-space/marketplace \
+            --base main \
+            --head "$branch" \
+            --title "chore: update Matt Pocock Skills to ${TAG}" \
+            --body "Publishes \`official/mattpocock.skills\` ${TAG}, synchronized from \`mattpocock/skills\` ${TAG}. The universal static package and SHA-256 are recorded in the generated manifest."

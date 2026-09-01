@@ -1,0 +1,9 @@
+resolver = 1
+title = "Matt Pocock Skills"
+identifier = "mattpocock.skills"
+namespace = "official"
+kind = "skill"
+version = "1.2.3"
+description = "Matt Pocock's skills for real engineering"
+homepage = "https://github.com/mattpocock/skills"
+license = "MIT"
