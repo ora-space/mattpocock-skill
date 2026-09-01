@@ -100,8 +100,8 @@ jobs:
             exit 1
           fi
           branch="release/mattpocock-skills-${TAG}"
-          git clone https://x-access-token:${GH_TOKEN}@github.com/ora-space/marketplace.git marketplace
-          cd marketplace
+          git clone https://x-access-token:${GH_TOKEN}@github.com/ora-space/marketplace.git marketplace-repo
+          cd marketplace-repo
           if grep -q "version = \"${TAG#v}\"" registry/m/mattpocock.skills/orax.toml 2>/dev/null; then
             echo "Marketplace already contains ${TAG}"
             exit 0
@@ -113,7 +113,7 @@ jobs:
           git checkout -b "$branch"
           mkdir -p registry/m/mattpocock.skills
           cp ../dist/manifest.toml registry/m/mattpocock.skills/orax.toml
-          cp ../README.md registry/m/mattpocock.skills/README.md
+          cp ../marketplace/README.md registry/m/mattpocock.skills/README.md
           git config user.name github-actions
           git config user.email github-actions@github.com
           git add registry/m/mattpocock.skills
