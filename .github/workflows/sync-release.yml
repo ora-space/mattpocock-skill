@@ -89,16 +89,23 @@ jobs:
             --dir dist \
             --clobber
 
+      - name: Create marketplace token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: ora-space
+          repositories: marketplace
+          permission-contents: write
+          permission-pull-requests: write
+
       - name: Open marketplace update PR
         env:
-          GH_TOKEN: ${{ secrets.MARKETPLACE_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           TAG: ${{ steps.upstream.outputs.tag }}
         run: |
           set -euo pipefail
-          if [[ -z "${GH_TOKEN:-}" ]]; then
-            echo "MARKETPLACE_TOKEN is required to update ora-space/marketplace" >&2
-            exit 1
-          fi
           branch="release/mattpocock-skills-${TAG}"
           git clone https://x-access-token:${GH_TOKEN}@github.com/ora-space/marketplace.git marketplace-repo
           cd marketplace-repo
